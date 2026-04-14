@@ -37,6 +37,12 @@ class Settings:
         base_url=os.getenv("EMBEDDING_BASE_URL", ""),
     )
 
+    IMAGE_GEN_MODEL = ModelConfig(
+        name=os.getenv("IMAGE_GEN_MODEL", ""),
+        api_key=os.getenv("IMAGE_GEN_API_KEY", ""),
+        base_url=os.getenv("IMAGE_GEN_BASE_URL", ""),
+    )
+
     HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "10"))
 
     # 加载 prompts.yaml

@@ -445,7 +445,7 @@ function App() {
             audio.onended = () => setCurrentAudio(null);
           }
           else if (data.type === 'state_update') {
-            setCurrentState(data.state);
+            setCurrentState(prev => ({ ...prev, ...data.state }));
           }
         } catch (err) {
           console.error("解析 WebSocket 消息失败:", err, event.data);
@@ -626,8 +626,16 @@ function App() {
     }
   };
 
+  const appStyle = currentState["背景图Url"] ? { 
+    backgroundImage: `url(${currentState["背景图Url"]})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+    transition: 'background-image 1.5s ease-in-out'
+  } : {};
+
   return (
-    <div className={`app-container ${isSidebarOpen ? 'sidebar-open' : ''}`}>
+    <div className={`app-container ${isSidebarOpen ? 'sidebar-open' : ''}`} style={appStyle}>
       {/* Toast 提示 */}
       {toastMessage && (
         <div className="toast-message">
