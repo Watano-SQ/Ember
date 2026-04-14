@@ -106,6 +106,62 @@ class Brain:
                 need_search = intent_data.get("need_search", False)
                 search_query = intent_data.get("search_query", "")
 
+                new_location = intent_data.get("location", "")
+                new_action = intent_data.get("action", "")
+                logger.info(f"[Pre-Routing] Intent extracted - location: '{new_location}', action: '{new_action}', full: {intent_data}")
+                
+                if new_location and new_action:
+                    current_location = settings.STATE.get("当前位置", "")
+                    if new_location != current_location:
+                        logger.info(f"[Location State] Location changed: {current_location} -> {new_location}. Action: {new_action}")
+                        
+                        # 立即向下游广播地点和行为的变更，让系统第一时间得知地点成功转移
+                        self.state_manager._update_state({"当前位置": new_location, "当前行为": new_action}, logical_now=self.event_bus.logical_now)
+
+                        def _update_location_bg():
+                            try:
+                                # 构建包含角色外貌和当前状态的丰富提示词
+                                state = self.state_manager.current_state
+                                pad_mood = ""
+                                p = state.get("P", 5)
+                                a = state.get("A", 5)
+                                if p >= 7:
+                                    pad_mood = "开心地微笑着"
+                                elif p >= 4:
+                                    pad_mood = "表情平静"
+                                else:
+                                    pad_mood = "表情略显低落"
+                                if a >= 7:
+                                    pad_mood += "，充满活力"
+                                elif a <= 3:
+                                    pad_mood += "，略显慈惰"
+
+                                inner = state.get("内心活动", "")
+                                situation = state.get("客观情境", "")
+
+                                prompt = (
+                                    f"日式动漫风格场景插画，二次元，masterpiece，动漫风格,clean line art,soft colors,线条简约,细线条，阴影简约，"
+                                    f"场景: {new_location}。"
+                                    f"画面中心是伊蕾娜,魔女之旅伊蕾娜，身高中等，银发，紫色瞳孔,侧马尾，"
+                                    f"着装符合魔女之旅伊蕾娜的日常穿搭。"
+                                    f"她正在{new_action}，{pad_mood},二次元，"
+                                    f"背景细节: {situation[:80] if situation else new_location}，"
+                                    f"氛围自然，符合动漫美学，二次元"
+                                )
+                                bg_url = self.llm_client.generate_image(prompt)
+                                if bg_url:
+                                    logger.info(f"[Location State] Generated BG URL: {bg_url}")
+                                    # 图片生成完后，仅下发生成的图片 URL 增量状态
+                                    self.state_manager._update_state({"背景图Url": bg_url}, logical_now=self.event_bus.logical_now)
+                            except Exception as e:
+                                logger.error(f"[Location State] Error generating background: {e}")
+                        
+                        threading.Thread(target=_update_location_bg).start()
+                    else:
+                        # Even if location didn't change, action might have
+                        if settings.STATE.get("当前行为") != new_action:
+                            self.state_manager._update_state({"当前行为": new_action}, logical_now=self.event_bus.logical_now)
+
                 tool_calls = []
                 if need_memory and memory_query:
                     # MemoryQueryTool 需要 query 和 keywords 两个必需参数

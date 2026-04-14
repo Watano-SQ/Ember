@@ -231,3 +231,79 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Get Embedding Error: {e}")
             return None
+
+    def generate_image(self, prompt: str, model_config=None):
+        if model_config is None:
+            model_config = settings.IMAGE_GEN_MODEL
+
+        if not model_config.name:
+            logger.error("No model name configured for image generation. Skipping.")
+            return None
+
+        api_key = model_config.api_key or settings.LARGE_LLM.api_key
+        base_url = model_config.base_url or settings.LARGE_LLM.base_url
+
+        try:
+            # 如果是千问图像模型，走原生的 DashScope MultiModal HTTP 接口
+            if "qwen-image" in model_config.name.lower():
+                import urllib.request
+                import json
+                
+                if not base_url.endswith("/generation"):
+                    base_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "X-DashScope-Async": "disable" # qwen-image-2.0-pro supports sync request
+                }
+                
+                payload = {
+                    "model": model_config.name,
+                    "input": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"text": prompt}
+                                ]
+                            }
+                        ]
+                    },
+                    "parameters": {
+                        "size": "2688*1536",
+                        "negative_prompt": "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感，构图混乱。",
+                        "prompt_extend": True,
+                        "watermark": False
+                    }
+                }
+                
+                logger.info(f"正在使用原生 HTTP 请求 DashScope API 生成图片: {model_config.name}")
+                req = urllib.request.Request(base_url, data=json.dumps(payload).encode('utf-8'), headers=headers, method="POST")
+                
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    raw_data = resp.read().decode('utf-8')
+                    data = json.loads(raw_data)
+                
+                try:
+                    url = data["output"]["choices"][0]["message"]["content"][0]["image"]
+                    return url
+                except (KeyError, IndexError) as err:
+                    logger.error(f"Image Generation failed to parse Qwen response: {data} -> {err}")
+                    return None
+            else:
+                # 保留对标准 OpenAI API 的兼容 (DALL-E 3 等)
+                client = OpenAI(api_key=api_key, base_url=base_url)
+                logger.info(f"正在使用 OpenAI API 生成图片: {model_config.name}")
+                response = client.images.generate(
+                    model=model_config.name,
+                    prompt=prompt,
+                    n=1,
+                    size="1024x1024",
+                    response_format="url"
+                )
+                return response.data[0].url
+        except Exception as e:
+            logger.error(f"Image Generation Error: {e}")
+            return None
+

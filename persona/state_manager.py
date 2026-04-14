@@ -229,14 +229,19 @@ class StateManager:
         self._executor.submit(_log)
 
     def _update_state(self, new_state, logical_now=None):
-        data = new_state.copy()
-        del data["近期综合轨迹"]
+        # 安全地复制并删除近期综合轨迹（用于日志记录），不影响原始数据
+        log_data = new_state.copy()
+        log_data.pop("近期综合轨迹", None)  # 使用 pop 避免 KeyError
         self._async_log(
             "./config/chat_history.log",
             f"{self.state_zip}",
         )
 
-        self.event_bus.publish(Event("state.update", data={"new_state": new_state}))
+        # 先将增量合并到 current_state，保证状态完整性
+        self.current_state.update(new_state)
+
+        # 广播的是完整的合并后状态，而非仅仅增量
+        self.event_bus.publish(Event("state.update", data={"new_state": self.current_state.copy()}))
 
         # 使用锁保护文件写入，防止竞争条件
         if not hasattr(self, "_state_lock"):
@@ -244,9 +249,9 @@ class StateManager:
 
         with self._state_lock:
             try:
+                # 写入完整的 current_state 而非仅 new_state
                 with open("./config/state.json", "w", encoding="utf-8") as f:
-                    json.dump(new_state, f, ensure_ascii=False, indent=2)
-                self.current_state.update(new_state)
+                    json.dump(self.current_state, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error(f"状态文件写入失败: {e}")
 
@@ -395,12 +400,14 @@ class StateManager:
         s = self.current_state
         time_str = s.get("对应时间", "")
         pad = f"P:{s.get('P',5)} A:{s.get('A',5)} D:{s.get('D',5)}"
+        location = s.get("当前位置", "常规位置")
+        action = s.get("当前行为", "无特定行为")
         situation = s.get("客观情境", "")
         inner = s.get("内心活动", "")
         goal = s.get("近期目标", "")
 
         # 紧凑格式，完整保留内容
-        return f"\n[状态 {time_str} | {pad}]\n情境:{situation}\n内心:{inner}\n目标:{goal}\n"
+        return f"\n[状态 {time_str} | {pad}]\n位置:{location} (正在:{action})\n情境:{situation}\n内心:{inner}\n目标:{goal}\n"
 
     @property
     def speaking_prompt_injection(self):
