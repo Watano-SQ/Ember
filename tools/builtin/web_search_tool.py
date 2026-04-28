@@ -42,15 +42,15 @@ class WebSearchTool(BaseTool):
         logger.info(f"[WebSearchTool] 正在搜索: {query}")
         try:
             results = []
-            with DDGS() as ddgs:
-                ddgs_gen = ddgs.text(query, max_results=max_results)
-                if ddgs_gen:
-                    for r in ddgs_gen:
-                        results.append({
-                            "title": r.get("title", ""),
-                            "snippet": r.get("body", ""),
-                            "link": r.get("href", "")
-                        })
+            ddgs = DDGS()
+            ddgs_gen = ddgs.text(query, max_results=max_results)
+            if ddgs_gen:
+                for r in ddgs_gen:
+                    results.append({
+                        "title": r.get("title", ""),
+                        "snippet": r.get("body", ""),
+                        "link": r.get("href", "")
+                    })
             
             if not results:
                 return ToolResult.ok(data="未找到相关结果，可能该事件太新或关键词不准确。")

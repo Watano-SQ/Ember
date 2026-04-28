@@ -62,15 +62,16 @@ class Brain:
         thread.start()
 
     def process_dialogue(self, user_message):
-        # 防止并发处理
-        if self._is_processing:
-            logger.warning("正在处理中，忽略新输入")
-            return
-
-        try:
+        # 防止并发处理（使用锁保护原子性检查）
+        with self.lock:
+            if self._is_processing:
+                logger.warning("正在处理中，忽略新输入")
+                return
             self._is_processing = True
 
-            self.memory.add_message("user", user_message)
+        try:
+
+            self.memory.add_message("user", user_message, timestamp=self.event_bus.formatted_logical_now)
 
             # === Pre-Routing 意图识别与预检索 ===
             dynamic_context = ""
@@ -140,9 +141,9 @@ class Brain:
                                 situation = state.get("客观情境", "")
 
                                 prompt = (
-                                    f"日式动漫风格场景插画，二次元，masterpiece，动漫风格,clean line art,soft colors,线条简约,细线条，阴影简约，"
+                                    f"日式动漫风格场景插画，第一人称视角，二次元，masterpiece，动漫风格,clean line art,soft colors,线条简约,细线条，阴影简约，"
                                     f"场景: {new_location}。"
-                                    f"画面中心是伊蕾娜,魔女之旅伊蕾娜，身高中等，银发，紫色瞳孔,侧马尾，"
+                                    f"画面中心是伊蕾娜一个人，魔女之旅伊蕾娜，身高中等，银发，紫色瞳孔,侧马尾，二次元画风"
                                     f"着装符合魔女之旅伊蕾娜的日常穿搭。"
                                     f"她正在{new_action}，{pad_mood},二次元，"
                                     f"背景细节: {situation[:80] if situation else new_location}，"
@@ -436,7 +437,7 @@ class Brain:
             logger.info(f"LLM回复: {full_content[:100]}...")
 
             try:
-                self.memory.add_message("assistant", full_content)
+                self.memory.add_message("assistant", full_content, timestamp=self.event_bus.formatted_logical_now)
             except Exception as e:
                 logger.error(f"保存消息失败: {e}")
 

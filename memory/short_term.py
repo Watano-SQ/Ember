@@ -43,8 +43,11 @@ class ShortTermMemory:
         self.memory.insert(0, {"role": role, "content": content})
         self._truncate_memory()
 
-    def _add_back(self, role, content):
-        self.memory.append({"role": role, "content": content})
+    def _add_back(self, role, content, timestamp=None):
+        msg = {"role": role, "content": content}
+        if timestamp:
+            msg["timestamp"] = timestamp
+        self.memory.append(msg)
         self._truncate_memory()
 
     def _truncate_memory(self):
@@ -71,16 +74,16 @@ class ShortTermMemory:
 
         self._executor.submit(_log)
 
-    def add_message(self, role, content):
+    def add_message(self, role, content, timestamp=None):
         if role == "assistant":
             _, speech = separate_thought_and_speech(content)
-            self._add_back(role, speech)
+            self._add_back(role, speech, timestamp=timestamp)
             self.async_log(
                 "./config/chat_history.log",
                 f"{role}: {speech}",
             )
         else:
-            self._add_back(role, content)
+            self._add_back(role, content, timestamp=timestamp)
             self.async_log(
                 "./config/chat_history.log",
                 f"{role}: {content}",
@@ -102,9 +105,23 @@ class ShortTermMemory:
 
     def get_full_messages(self):
         system_content = self.base_prompt
+        # 为每条消息附加时间戳前缀，让 LLM 感知对话的时间线
+        timestamped_memory = []
+        for msg in self.memory:
+            ts = msg.get("timestamp", "")
+            if ts:
+                # 从 "YYYY-MM-DD HH:MM:SS" 中提取 "MM-DD HH:MM"
+                try:
+                    short_ts = ts[5:16]  # "MM-DD HH:MM"
+                    content = f"[{short_ts}] {msg['content']}"
+                except Exception:
+                    content = msg["content"]
+            else:
+                content = msg["content"]
+            timestamped_memory.append({"role": msg["role"], "content": content})
         return [
             {"role": "system", "content": system_content},
-        ] + self.memory
+        ] + timestamped_memory
 
     def get_memory(self):
         return {"history": copy.deepcopy(self.memory)}

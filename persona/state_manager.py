@@ -35,6 +35,7 @@ class StateManager:
 
         self.current_state = settings.STATE
         self._thinking_lock = threading.Lock()  # 保护 is_thinking
+        self._state_lock = threading.Lock()  # 保护 state.json 文件写入
         self._thinking = False
         self.is_sleeping = False
         self.dialogue_count = 0
@@ -244,9 +245,6 @@ class StateManager:
         self.event_bus.publish(Event("state.update", data={"new_state": self.current_state.copy()}))
 
         # 使用锁保护文件写入，防止竞争条件
-        if not hasattr(self, "_state_lock"):
-            self._state_lock = threading.Lock()
-
         with self._state_lock:
             try:
                 # 写入完整的 current_state 而非仅 new_state
