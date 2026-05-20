@@ -7,6 +7,7 @@ from core.event_bus import EventBus, Event
 from config.settings import settings
 from brain.llm_client import LLMClient
 from memory.neo4j_memory import Neo4jGraphMemory
+from memory.db_pool import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -28,30 +29,10 @@ class EntityExtractionMemory:
         self.llm_client = LLMClient()
         self.enabled = settings.ENABLE_NEO4J
         self.graph_memory = None
-        self.conn = None
 
         if self.enabled:
             self.graph_memory = Neo4jGraphMemory(event_bus)
-            self._ensure_connection()
             self._subscribe_events()
-
-    def _ensure_connection(self):
-        """确保 PostgreSQL 连接"""
-        try:
-            if self.conn is None or self.conn.closed:
-                self.conn = psycopg2.connect(
-                    dbname=settings.PG_DB,
-                    user=settings.PG_USER,
-                    password=settings.PG_PASSWORD,
-                    host=settings.PG_HOST,
-                    port=settings.PG_PORT,
-                    connect_timeout=5,
-                )
-                register_vector(self.conn)
-                logger.debug("EntityExtractionMemory connected to PostgreSQL.")
-        except Exception as e:
-            logger.error(f"PostgreSQL connection failed: {e}")
-            self.conn = None
 
     def _subscribe_events(self):
         """订阅相关事件"""
@@ -73,11 +54,6 @@ class EntityExtractionMemory:
         """
         if not self.enabled or not self.graph_memory:
             logger.warning("Neo4j 未启用，跳过知识图谱整理")
-            return {"batches": 0, "nodes": 0, "edges": 0}
-
-        self._ensure_connection()
-        if not self.conn:
-            logger.error("无法连接 PostgreSQL，跳过整理")
             return {"batches": 0, "nodes": 0, "edges": 0}
 
         try:
@@ -139,38 +115,37 @@ class EntityExtractionMemory:
     def _fetch_all_memories(self) -> list:
         """从 episodic_memory 读取未整理的记忆（is_consolidated=0，按时间从早到晚排序）"""
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, content, insight, importance, time, metadata
-                    FROM episodic_memory
-                    WHERE is_consolidated = 0
-                    ORDER BY time ASC
-                    """
-                )
-                rows = cur.fetchall()
-
-                memories = []
-                for row in rows:
-                    memories.append(
-                        {
-                            "id": row[0],
-                            "content": row[1],
-                            "insight": row[2],
-                            "importance": row[3],
-                            "time": (
-                                row[4].isoformat()
-                                if hasattr(row[4], "isoformat")
-                                else str(row[4])
-                            ),
-                            "metadata": row[5],
-                        }
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, content, insight, importance, time, metadata
+                        FROM episodic_memory
+                        WHERE is_consolidated = 0
+                        ORDER BY time ASC
+                        """
                     )
-                return memories
+                    rows = cur.fetchall()
+
+                    memories = []
+                    for row in rows:
+                        memories.append(
+                            {
+                                "id": row[0],
+                                "content": row[1],
+                                "insight": row[2],
+                                "importance": row[3],
+                                "time": (
+                                    row[4].isoformat()
+                                    if hasattr(row[4], "isoformat")
+                                    else str(row[4])
+                                ),
+                                "metadata": row[5],
+                            }
+                        )
+                    return memories
         except Exception as e:
             logger.error(f"读取记忆失败: {e}")
-            if self.conn:
-                self.conn.rollback()
             return []
 
     def _build_summaries(self, memories: list) -> str:
@@ -308,21 +283,20 @@ class EntityExtractionMemory:
             return
 
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE episodic_memory
-                    SET is_consolidated = 1
-                    WHERE id = ANY(%s)
-                    """,
-                    (memory_ids,),
-                )
-                self.conn.commit()
-                logger.debug(f"已标记 {len(memory_ids)} 条记忆为已整理")
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE episodic_memory
+                        SET is_consolidated = 1
+                        WHERE id = ANY(%s)
+                        """,
+                        (memory_ids,),
+                    )
+                    conn.commit()
+                    logger.debug(f"已标记 {len(memory_ids)} 条记忆为已整理")
         except Exception as e:
             logger.error(f"标记记忆状态失败: {e}")
-            if self.conn:
-                self.conn.rollback()
 
     def _process_edge(self, item: dict) -> bool:
         """处理关系操作"""

@@ -11,6 +11,7 @@ from brain.llm_client import LLMClient
 import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
+from memory.db_pool import get_connection
 
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,6 @@ logger = logging.getLogger(__name__)
 class EpisodicMemory:
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.conn = None
-        self._ensure_connection()
         self._init_db()
 
         self.store_queue = Queue()
@@ -33,70 +32,49 @@ class EpisodicMemory:
         self.event_bus.subscribe("memory.query", self._on_query_request)
         self.event_bus.subscribe("memory.sleep", self._sleep_memory_process)
 
-    def _ensure_connection(self):
-        try:
-            if self.conn is None or self.conn.closed:
-                self.conn = psycopg2.connect(
-                    dbname=settings.PG_DB,
-                    user=settings.PG_USER,
-                    password=settings.PG_PASSWORD,
-                    host=settings.PG_HOST,
-                    port=settings.PG_PORT,
-                    connect_timeout=5,
-                )
-                register_vector(self.conn)
-                logger.debug("EpisodicMemory connected to PostgreSQL.")
-        except Exception as e:
-            logger.error(f"PostgreSQL connection failed: {e}")
-            self.conn = None
-
     def _init_db(self):
-        self._ensure_connection()
-        if not self.conn:
-            return
         try:
-            with self.conn.cursor() as cur:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-                register_vector(self.conn)
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                    register_vector(conn)
 
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS episodic_memory(
-                        id SERIAL PRIMARY KEY,
-                        content TEXT NOT NULL,
-                        embedding vector(1536),
-                        insight TEXT,
-                        insight_embedding vector(1536),
-                        importance FLOAT DEFAULT 1.0,
-                        confidence FLOAT DEFAULT 1.0,
-                        clarity FLOAT DEFAULT 1.0,
-                        access_count INTEGER DEFAULT 0,
-                        last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        metadata JSONB,
-                        time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        is_consolidated INTEGER DEFAULT 0
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS episodic_memory(
+                            id SERIAL PRIMARY KEY,
+                            content TEXT NOT NULL,
+                            embedding vector(1536),
+                            insight TEXT,
+                            insight_embedding vector(1536),
+                            importance FLOAT DEFAULT 1.0,
+                            confidence FLOAT DEFAULT 1.0,
+                            clarity FLOAT DEFAULT 1.0,
+                            access_count INTEGER DEFAULT 0,
+                            last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            metadata JSONB,
+                            time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            is_consolidated INTEGER DEFAULT 0
+                        )
+                        """
                     )
-                    """
-                )
-                cur.execute(
-                    """
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name = 'episodic_memory'
-                            AND column_name = 'is_consolidated'
-                        ) THEN
-                            ALTER TABLE episodic_memory ADD COLUMN is_consolidated INTEGER DEFAULT 0;
-                        END IF;
-                    END $$;
-                    """
-                )
-                self.conn.commit()
+                    cur.execute(
+                        """
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM information_schema.columns
+                                WHERE table_name = 'episodic_memory'
+                                AND column_name = 'is_consolidated'
+                            ) THEN
+                                ALTER TABLE episodic_memory ADD COLUMN is_consolidated INTEGER DEFAULT 0;
+                            END IF;
+                        END $$;
+                        """
+                    )
+                    conn.commit()
         except Exception as e:
             logger.error(f"Failed to init DB: {e}")
-            if self.conn:
-                self.conn.rollback()
 
     def _on_store_request(self, event: Event):
         self.store_queue.put({"type": "store", "data": event.data})
@@ -146,9 +124,7 @@ class EpisodicMemory:
             event_data["embedding"] = embedding
             event_data["insight_embedding"] = insight_embedding
 
-            self._ensure_connection()
-            if self.conn:
-                self._add_memory(event_data)
+            self._add_memory(event_data)
         except Exception as e:
             logger.error(f"Failed to process memory store request: {e}")
 
@@ -169,12 +145,6 @@ class EpisodicMemory:
             except Exception as e:
                 logger.error(f"Embedding query failed: {e}")
 
-        self._ensure_connection()
-        if not self.conn:
-            if "callback" in event.data:
-                event.data["callback"]([])
-            return
-
         memories_sim = self._query_by_similarity(embedding) if embedding else []
         memories_key = self._query_by_keywords(key_words) if key_words else []
 
@@ -193,170 +163,159 @@ class EpisodicMemory:
             self.store_queue.put({"type": "update_access", "id": m_id})
 
     def _execute_update_access(self, event_id):
-        self._ensure_connection()
-        if not self.conn:
-            return
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE episodic_memory 
-                    SET access_count = access_count + 1,
-                        last_accessed = CURRENT_TIMESTAMP,
-                        clarity = LEAST(5.0, clarity + (importance * exp(-clarity / 1)))
-                    WHERE id = %s
-                    """,
-                    (event_id,),
-                )
-                self.conn.commit()
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE episodic_memory 
+                        SET access_count = access_count + 1,
+                            last_accessed = CURRENT_TIMESTAMP,
+                            clarity = LEAST(5.0, clarity + (importance * exp(-clarity / 1)))
+                        WHERE id = %s
+                        """,
+                        (event_id,),
+                    )
+                    conn.commit()
         except Exception as e:
             logger.error(f"Failed to update access count for memory {event_id}: {e}")
-            if self.conn:
-                self.conn.rollback()
 
     def _sleep_memory_process(self, event: Event):
-        self._ensure_connection()
-        if not self.conn:
-            return
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE episodic_memory
-                    SET clarity = clarity * exp(
-                            -%s / (1.0 + ln(1.0 + access_count))
-                        )
-                    WHERE clarity > 0.01
-                    """,
-                    (settings.MEMORY_DECENT_FACTOR,),
-                )
-                cur.execute("DELETE FROM episodic_memory WHERE clarity < 0.05")
-                self.conn.commit()
-                logger.info("Memory cleanup (deleted low clarity memories) completed.")
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE episodic_memory
+                        SET clarity = clarity * exp(
+                                -%s / (1.0 + ln(1.0 + access_count))
+                            )
+                        WHERE clarity > 0.01
+                        """,
+                        (settings.MEMORY_DECENT_FACTOR,),
+                    )
+                    cur.execute("DELETE FROM episodic_memory WHERE clarity < 0.05")
+                    conn.commit()
+                    logger.info("Memory cleanup (deleted low clarity memories) completed.")
         except Exception as e:
             logger.error(f"Memory cleanup failed: {e}")
-            if self.conn:
-                self.conn.rollback()
 
     def _add_memory(self, event_data):
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO episodic_memory (content, embedding, insight, insight_embedding, importance, confidence, metadata, time, last_accessed, clarity)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        event_data.get("content", ""),
-                        event_data.get("embedding"),
-                        event_data.get("insight", ""),
-                        event_data.get("insight_embedding"),
-                        event_data.get("importance", 1.0),
-                        event_data.get("confidence", 1.0),
-                        Json({"keywords": event_data.get("keywords", [])}),
-                        event_data.get("time"),
-                        event_data.get("time"),
-                        event_data.get("importance", 1.0),
-                    ),
-                )
-                self.conn.commit()
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO episodic_memory (content, embedding, insight, insight_embedding, importance, confidence, metadata, time, last_accessed, clarity)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            event_data.get("content", ""),
+                            event_data.get("embedding"),
+                            event_data.get("insight", ""),
+                            event_data.get("insight_embedding"),
+                            event_data.get("importance", 1.0),
+                            event_data.get("confidence", 1.0),
+                            Json({"keywords": event_data.get("keywords", [])}),
+                            event_data.get("time"),
+                            event_data.get("time"),
+                            event_data.get("importance", 1.0),
+                        ),
+                    )
+                    conn.commit()
         except Exception as e:
             logger.error(f"Failed to add memory to DB: {e}")
-            if self.conn:
-                self.conn.rollback()
 
     def _query_by_similarity(self, query_vector):
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, content, insight, importance, confidence, access_count, last_accessed, metadata,
-                    (1 - (embedding <=> %s::vector)) as similarity1,
-                    (1 - (insight_embedding <=> %s::vector)) as similarity2,
-                    time
-                    FROM episodic_memory 
-                    ORDER BY GREATEST((1 - (embedding <=> %s::vector)), (1 - (insight_embedding <=> %s::vector))) DESC, clarity DESC
-                    LIMIT %s
-                    """,
-                    (
-                        query_vector,
-                        query_vector,
-                        query_vector,
-                        query_vector,
-                        settings.RECALL_TOP_K,
-                    ),
-                )
-                results = cur.fetchall()
-                memories = []
-                for row in results:
-                    memories.append(
-                        {
-                            "id": row[0],
-                            "content": row[1],
-                            "insight": row[2],
-                            "importance": row[3],
-                            "confidence": row[4],
-                            "metadata": row[7],
-                            "time": (
-                                row[10].isoformat()
-                                if hasattr(row[10], "isoformat")
-                                else str(row[10])
-                            ),
-                        }
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, content, insight, importance, confidence, access_count, last_accessed, metadata,
+                        (1 - (embedding <=> %s::vector)) as similarity1,
+                        (1 - (insight_embedding <=> %s::vector)) as similarity2,
+                        time
+                        FROM episodic_memory 
+                        ORDER BY GREATEST((1 - (embedding <=> %s::vector)), (1 - (insight_embedding <=> %s::vector))) DESC, clarity DESC
+                        LIMIT %s
+                        """,
+                        (
+                            query_vector,
+                            query_vector,
+                            query_vector,
+                            query_vector,
+                            settings.RECALL_TOP_K,
+                        ),
                     )
-                return memories
+                    results = cur.fetchall()
+                    memories = []
+                    for row in results:
+                        memories.append(
+                            {
+                                "id": row[0],
+                                "content": row[1],
+                                "insight": row[2],
+                                "importance": row[3],
+                                "confidence": row[4],
+                                "metadata": row[7],
+                                "time": (
+                                    row[10].isoformat()
+                                    if hasattr(row[10], "isoformat")
+                                    else str(row[10])
+                                ),
+                            }
+                        )
+                    return memories
         except Exception as e:
             logger.error(f"Similarity query failed: {e}")
-            if self.conn:
-                self.conn.rollback()
             return []
 
     def _query_by_keywords(self, keywords: list):
         if not keywords:
             return []
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    WITH keyword_matches AS (
-                        SELECT 
-                            id, content, insight, importance, confidence, access_count, last_accessed, metadata, clarity, time,
-                            (
-                                SELECT count(*) 
-                                FROM jsonb_array_elements_text((metadata->'keywords')::jsonb) as k 
-                                WHERE k = ANY(%s)
-                            ) as match_count
-                        FROM episodic_memory
-                        WHERE (metadata->'keywords')::jsonb ?| %s
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        WITH keyword_matches AS (
+                            SELECT 
+                                id, content, insight, importance, confidence, access_count, last_accessed, metadata, clarity, time,
+                                (
+                                    SELECT count(*) 
+                                    FROM jsonb_array_elements_text((metadata->'keywords')::jsonb) as k 
+                                    WHERE k = ANY(%s)
+                                ) as match_count
+                            FROM episodic_memory
+                            WHERE (metadata->'keywords')::jsonb ?| %s
+                        )
+                        SELECT id, content, insight, importance, confidence, access_count, last_accessed, metadata, clarity, time
+                        FROM keyword_matches
+                        ORDER BY match_count DESC, clarity DESC
+                        LIMIT %s
+                        """,
+                        (keywords, keywords, settings.RECALL_TOP_K),
                     )
-                    SELECT id, content, insight, importance, confidence, access_count, last_accessed, metadata, clarity, time
-                    FROM keyword_matches
-                    ORDER BY match_count DESC, clarity DESC
-                    LIMIT %s
-                    """,
-                    (keywords, keywords, settings.RECALL_TOP_K),
-                )
-                rows = cur.fetchall()
-                memories = []
-                for row in rows:
-                    memories.append(
-                        {
-                            "id": row[0],
-                            "content": row[1],
-                            "insight": row[2],
-                            "importance": row[3],
-                            "confidence": row[4],
-                            "metadata": row[7],
-                            "time": (
-                                row[9].isoformat()
-                                if hasattr(row[9], "isoformat")
-                                else str(row[9])
-                            ),
-                        }
-                    )
-                return memories
+                    rows = cur.fetchall()
+                    memories = []
+                    for row in rows:
+                        memories.append(
+                            {
+                                "id": row[0],
+                                "content": row[1],
+                                "insight": row[2],
+                                "importance": row[3],
+                                "confidence": row[4],
+                                "metadata": row[7],
+                                "time": (
+                                    row[9].isoformat()
+                                    if hasattr(row[9], "isoformat")
+                                    else str(row[9])
+                                ),
+                            }
+                        )
+                    return memories
         except Exception as e:
             logger.error(f"Keyword query failed: {e}")
-            if self.conn:
-                self.conn.rollback()
             return []
