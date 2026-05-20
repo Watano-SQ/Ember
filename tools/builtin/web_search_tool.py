@@ -1,9 +1,22 @@
 from tools.base import BaseTool, ToolResult, ToolPermission
-from duckduckgo_search import DDGS
 import logging
-import json
 
 logger = logging.getLogger(__name__)
+
+
+def _load_ddgs_client():
+    try:
+        from ddgs import DDGS
+        return DDGS
+    except ImportError:
+        try:
+            from duckduckgo_search import DDGS
+            return DDGS
+        except ImportError as exc:
+            raise RuntimeError(
+                "缺少网页搜索依赖，请安装 ddgs 或 duckduckgo_search"
+            ) from exc
+
 
 class WebSearchTool(BaseTool):
     """
@@ -42,6 +55,7 @@ class WebSearchTool(BaseTool):
         logger.info(f"[WebSearchTool] 正在搜索: {query}")
         try:
             results = []
+            DDGS = _load_ddgs_client()
             ddgs = DDGS()
             ddgs_gen = ddgs.text(query, max_results=max_results)
             if ddgs_gen:

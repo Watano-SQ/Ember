@@ -1,0 +1,127 @@
+.profile-modal {
+    width: 560px;
+}
+
+.profile-modal-body {
+    padding: 18px;
+    overflow-y: auto;
+}
+
+.profile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.profile-card {
+    width: 100%;
+    min-height: 78px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.92);
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.profile-card:hover:not(:disabled) {
+    background: rgba(24, 144, 255, 0.16);
+    border-color: rgba(24, 144, 255, 0.32);
+    transform: translateY(-1px);
+}
+
+.profile-card.active {
+    background: rgba(24, 144, 255, 0.2);
+    border-color: rgba(24, 144, 255, 0.45);
+}
+
+.profile-card.active,
+.profile-card.busy {
+    cursor: default;
+}
+
+.profile-card:focus-visible {
+    outline: 2px solid rgba(24, 144, 255, 0.65);
+    outline-offset: 2px;
+}
+
+.profile-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.14);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.profile-info {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.profile-name {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.profile-path {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.58);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.profile-status {
+    min-width: 74px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.profile-status.active {
+    background: rgba(105, 236, 133, 0.2);
+    color: #69ec85;
+}
+
+.profile-adjust-btn {
+    grid-column: 2 / 4;
+    justify-self: flex-start;
+    border: 1px solid rgba(24, 144, 255, 0.32);
+    border-radius: 10px;
+    background: rgba(24, 144, 255, 0.18);
+    color: rgba(255, 255, 255, 0.92);
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.profile-adjust-btn:hover {
+    background: rgba(24, 144, 255, 0.28);
+    transform: translateY(-1px);
+}
+
+.profile-empty {
+    padding: 28px 12px;
+    color: rgba(255, 255, 255, 0.7);
+    text-align: center;
+    font-size: 14px;
+}

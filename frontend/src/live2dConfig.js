@@ -1,8 +1,10 @@
 export const LIVE2D_CONFIG = {
     model: {
-        path: '/models/LSS/LSS.model3.json',
+        path: '/models/yachiyo/八千代辉夜姬.model3.json',
         scale: 1.0,
-        anchor: { x: 0.5, y: 0.5 }
+        anchor: { x: 0.5, y: 0.5 },
+        offset: { x: 0, y: 0 },
+        fitPadding: 0.95
     },
     canvas: {
         width: 1200,

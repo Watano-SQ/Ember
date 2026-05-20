@@ -25,6 +25,13 @@ from archive import ArchiveManager
 
 # Configure logging
 logger = get_logger(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_PROFILE_DISPLAY = {
+    "scale": 1.0,
+    "offset_x": 0,
+    "offset_y": 0,
+    "anchor": {"x": 0.5, "y": 0.5},
+}
 
 
 class ConnectionManager:
@@ -112,6 +119,79 @@ class EmberServer:
         self._setup_routes()
         self._setup_event_handlers()
 
+    def _normalize_profile_display(self, display: dict | None) -> dict:
+        if not isinstance(display, dict):
+            display = {}
+        anchor = display.get("anchor")
+        if not isinstance(anchor, dict):
+            anchor = {}
+
+        def number_or_default(value, default):
+            return value if isinstance(value, (int, float)) else default
+
+        return {
+            "scale": number_or_default(display.get("scale"), DEFAULT_PROFILE_DISPLAY["scale"]),
+            "offset_x": number_or_default(display.get("offset_x"), DEFAULT_PROFILE_DISPLAY["offset_x"]),
+            "offset_y": number_or_default(display.get("offset_y"), DEFAULT_PROFILE_DISPLAY["offset_y"]),
+            "anchor": {
+                "x": number_or_default(anchor.get("x"), DEFAULT_PROFILE_DISPLAY["anchor"]["x"]),
+                "y": number_or_default(anchor.get("y"), DEFAULT_PROFILE_DISPLAY["anchor"]["y"]),
+            },
+        }
+
+    def _load_profiles_config(self) -> dict:
+        profiles_path = os.path.join(BASE_DIR, "config", "profiles.json")
+        try:
+            with open(profiles_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            logger.warning("config/profiles.json not found; using fallback Live2D profile")
+            return {
+                "current_profile_id": "default",
+                "profiles": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                        "model_path": settings.LIVE2D_MODEL_PATH,
+                    }
+                ],
+            }
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse config/profiles.json: {e}")
+            return {"current_profile_id": "", "profiles": []}
+
+        if not isinstance(data.get("profiles"), list):
+            data["profiles"] = []
+        for profile in data["profiles"]:
+            if isinstance(profile, dict):
+                profile["display"] = self._normalize_profile_display(profile.get("display"))
+        if "current_profile_id" not in data:
+            data["current_profile_id"] = data["profiles"][0]["id"] if data["profiles"] else ""
+        return data
+
+    def _save_profiles_config(self, profiles_config: dict):
+        profiles_path = os.path.join(BASE_DIR, "config", "profiles.json")
+        with open(profiles_path, "w", encoding="utf-8") as f:
+            json.dump(profiles_config, f, ensure_ascii=False, indent=2)
+
+    def _get_current_profile(self) -> dict:
+        profiles_config = self._load_profiles_config()
+        current_profile_id = profiles_config.get("current_profile_id")
+        profiles = profiles_config.get("profiles", [])
+        current_profile = next(
+            (profile for profile in profiles if profile.get("id") == current_profile_id),
+            None,
+        )
+        if current_profile:
+            return current_profile
+        if profiles:
+            return profiles[0]
+        return {
+            "id": "default",
+            "name": "Default",
+            "model_path": settings.LIVE2D_MODEL_PATH,
+        }
+
     def _setup_middleware(self):
         self.app.add_middleware(
             CORSMiddleware,
@@ -134,6 +214,7 @@ class EmberServer:
 
         @self.app.get("/config")
         async def get_config():
+            current_profile = self._get_current_profile()
             return {
                 "character_name": "Ember",
                 "display_name": settings.CHARACTER_NAME,
@@ -141,10 +222,24 @@ class EmberServer:
                 "logical_time": self.event_bus.formatted_logical_now,
                 "is_thinking": self.state_manager.is_thinking,
                 "time_accel_factor": self.event_bus.time_accel_factor,
+                "live2d": {
+                    "profile_id": current_profile.get("id"),
+                    "model_path": current_profile.get(
+                        "model_path", settings.LIVE2D_MODEL_PATH
+                    ),
+                    "display": current_profile.get("display"),
+                },
             }
 
         class TimeAccelRequest(BaseModel):
             factor: float
+
+        class ProfileSelectRequest(BaseModel):
+            profile_id: str
+
+        class ProfileDisplayRequest(BaseModel):
+            profile_id: str
+            display: dict
 
         @self.app.post("/config/time_accel")
         async def set_time_accel(request: TimeAccelRequest):
@@ -171,6 +266,59 @@ class EmberServer:
                 return []
 
         # ==================== 存档 API ====================
+
+        @self.app.get("/api/profiles")
+        async def get_profiles():
+            profiles_config = self._load_profiles_config()
+            return {
+                "current_profile_id": profiles_config.get("current_profile_id"),
+                "profiles": profiles_config.get("profiles", []),
+            }
+
+        @self.app.post("/api/profiles/select")
+        async def select_profile(request: ProfileSelectRequest):
+            profiles_config = self._load_profiles_config()
+            profiles = profiles_config.get("profiles", [])
+            profile = next(
+                (
+                    profile
+                    for profile in profiles
+                    if profile.get("id") == request.profile_id
+                ),
+                None,
+            )
+            if not profile:
+                raise HTTPException(status_code=404, detail="Profile not found")
+
+            profiles_config["current_profile_id"] = request.profile_id
+            self._save_profiles_config(profiles_config)
+            return {
+                "success": True,
+                "current_profile_id": request.profile_id,
+                "profile": profile,
+            }
+
+        @self.app.post("/api/profiles/display")
+        async def update_profile_display(request: ProfileDisplayRequest):
+            profiles_config = self._load_profiles_config()
+            profiles = profiles_config.get("profiles", [])
+            profile = next(
+                (
+                    profile
+                    for profile in profiles
+                    if profile.get("id") == request.profile_id
+                ),
+                None,
+            )
+            if not profile:
+                raise HTTPException(status_code=404, detail="Profile not found")
+
+            profile["display"] = self._normalize_profile_display(request.display)
+            self._save_profiles_config(profiles_config)
+            return {
+                "success": True,
+                "profile": profile,
+            }
 
         class ArchiveCreateRequest(BaseModel):
             slot_name: str

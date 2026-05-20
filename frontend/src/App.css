@@ -45,6 +45,81 @@
   flex-shrink: 0;
 }
 
+.profile-trigger-btn {
+  right: 76px;
+}
+
+.live2d-adjust-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 10001;
+  width: min(520px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  color: #fff;
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.live2d-adjust-title {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.live2d-scale-control {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.live2d-scale-control input {
+  width: 100%;
+  accent-color: #1890ff;
+}
+
+.live2d-adjust-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.live2d-adjust-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.live2d-adjust-actions button:hover {
+  background: rgba(24, 144, 255, 0.22);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .live2d-adjust-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .live2d-adjust-actions {
+    justify-content: space-between;
+  }
+}
+
 /* Toast 提示样式 */
 .toast-message {
   position: fixed;
@@ -887,8 +962,8 @@
   bottom: 15px;
   left: 50%;
   transform: translateX(-50%);
-  width: 90%;
-  max-width: 1000px;
+  width: min(90%, 950px);
+  max-width: 950px;
   background: rgba(255, 255, 255, 0.25);
   /* 与侧边栏一致的极致透明 */
   -webkit-backdrop-filter: blur(5px);
@@ -903,6 +978,13 @@
   z-index: 10000;
   pointer-events: auto;
   transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.app-container.sidebar-open .input-area {
+  left: auto;
+  right: 132px;
+  transform: none;
+  width: min(92%, 950px);
 }
 
 .toggle-sidebar-btn,
@@ -989,6 +1071,25 @@
   /* 缩放基点设为右下角 */
   transform: scale(0.35);
   /* 根据需要调整缩放比例 */
+}
+
+@media (max-width: 640px) {
+  .input-area {
+    width: min(90%, 950px);
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .app-container.sidebar-open .input-area {
+    left: 12px;
+    right: 132px;
+    width: auto;
+  }
+}
+
+#live2d-canvas.live2d-adjust-mode {
+  pointer-events: auto !important;
+  cursor: move;
 }
 
 

@@ -72,6 +72,10 @@ class Settings:
     logger.info(f"Loaded state: {STATE}")
 
     CHARACTER_NAME = os.getenv("CHARACTER_NAME", "依鸣")
+    LIVE2D_MODEL_PATH = os.getenv(
+        "LIVE2D_MODEL_PATH",
+        "/models/yachiyo/八千代辉夜姬.model3.json",
+    )
     CORE_PERSONA = PROMPTS.get("core_persona", "")
     SYSTEM_PROMPT = CORE_PERSONA + PROMPTS.get("system_prompt", "")
     STATE_UPDATE_PROMPT = PROMPTS.get("state_update_prompt", "")
