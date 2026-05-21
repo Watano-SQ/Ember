@@ -7,10 +7,40 @@ import { LIVE2D_CONFIG } from './live2dConfig';
 window.PIXI = PIXI;
 Live2DModel.registerTicker(PIXI.Ticker);
 
-const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
+const applyExpressionIfAvailable = (model, expressionName) => {
+    if (!expressionName || typeof model?.expression !== 'function') return;
+
+    try {
+        model.expression(expressionName);
+    } catch (error) {
+        console.warn("Live2D expression unavailable:", { expressionName, error });
+    }
+};
+
+const DEFAULT_MODEL_DISPLAY = {
+    scale: 1,
+    offset_x: 0,
+    offset_y: 0,
+    anchor: { x: 0.5, y: 0.5 },
+};
+
+const normalizeModelDisplay = (display) => ({
+    scale: Number.isFinite(display?.scale) ? display.scale : DEFAULT_MODEL_DISPLAY.scale,
+    offset_x: Number.isFinite(display?.offset_x) ? display.offset_x : DEFAULT_MODEL_DISPLAY.offset_x,
+    offset_y: Number.isFinite(display?.offset_y) ? display.offset_y : DEFAULT_MODEL_DISPLAY.offset_y,
+    anchor: {
+        x: Number.isFinite(display?.anchor?.x) ? display.anchor.x : DEFAULT_MODEL_DISPLAY.anchor.x,
+        y: Number.isFinite(display?.anchor?.y) ? display.anchor.y : DEFAULT_MODEL_DISPLAY.anchor.y,
+    },
+});
+
+const Live2DViewer = ({ currentEmotion, audio, modelPath, modelDisplay, adjustMode, onDisplayChange, onTouch }) => {
     const canvasRef = useRef(null);
     const appRef = useRef(null);
     const modelRef = useRef(null);
+    const baseScaleRef = useRef(1);
+    const dragRef = useRef(null);
+    const modelDisplayRef = useRef(modelDisplay);
     const [modelLoaded, setModelLoaded] = useState(false);
     
     // Refs for touch logic
@@ -18,6 +48,19 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
     const lastTouchTimeRef = useRef(0);
 
     useEffect(() => { onTouchRef.current = onTouch; }, [onTouch]);
+    useEffect(() => { modelDisplayRef.current = modelDisplay; }, [modelDisplay]);
+
+    const applyDisplayToModel = (display) => {
+        const app = appRef.current;
+        const model = modelRef.current;
+        if (!app || !model) return;
+
+        const normalizedDisplay = normalizeModelDisplay(display);
+        model.anchor.set(normalizedDisplay.anchor.x, normalizedDisplay.anchor.y);
+        model.x = (app.renderer.width / 2) + normalizedDisplay.offset_x;
+        model.y = (app.renderer.height / 2) + normalizedDisplay.offset_y;
+        model.scale.set(baseScaleRef.current * normalizedDisplay.scale);
+    };
 
     // 音频分析相关
     const analyserRef = useRef(null);
@@ -53,7 +96,7 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
             source = context.createMediaElementSource(audio);
             source.connect(analyser);
             analyser.connect(context.destination);
-        } catch (e) {
+        } catch {
             // 已连接则忽略
         }
 
@@ -173,12 +216,18 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
                     view: canvasRef.current,
                     width: LIVE2D_CONFIG.canvas.width,
                     height: LIVE2D_CONFIG.canvas.height,
-                    transparent: LIVE2D_CONFIG.pixi.transparent,
+                    backgroundAlpha: LIVE2D_CONFIG.pixi.transparent ? 0 : 1,
+                    autoDensity: true,
+                    resolution: window.devicePixelRatio || 1,
                     autoStart: LIVE2D_CONFIG.pixi.autoStart,
                 });
                 appRef.current = app;
 
                 const targetPath = modelPath || LIVE2D_CONFIG.model.path;
+                const publicPath = targetPath.startsWith('/models/')
+                    ? `frontend/public${targetPath}`
+                    : targetPath;
+                console.log("Loading Live2D model:", { url: targetPath, publicPath });
                 const model = await Live2DModel.from(targetPath, {
                     autoInteract: false
                 });
@@ -191,23 +240,31 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
                 modelRef.current = model;
                 app.stage.addChild(model);
 
-                model.anchor.set(LIVE2D_CONFIG.model.anchor.x, LIVE2D_CONFIG.model.anchor.y);
-                model.x = app.renderer.width / 2;
-                model.y = app.renderer.height / 2;
-
+                model.scale.set(1);
+                const { fitPadding, scale } = LIVE2D_CONFIG.model;
                 const scaleX = app.renderer.width / model.width;
                 const scaleY = app.renderer.height / model.height;
-                model.scale.set(Math.min(scaleX, scaleY) * LIVE2D_CONFIG.model.scale);
+                baseScaleRef.current = Math.min(scaleX, scaleY) * (fitPadding ?? 1) * scale;
+                applyDisplayToModel(modelDisplayRef.current);
 
-                console.log("Live2D Model Loaded");
+                console.log("Live2D Model Loaded", {
+                    url: targetPath,
+                    modelSize: { width: model.width, height: model.height },
+                    canvasSize: { width: app.renderer.width, height: app.renderer.height },
+                    scale: model.scale.x,
+                });
                 setModelLoaded(true);
 
-                if (currentEmotion && model.expression) {
-                    model.expression(currentEmotion);
-                }
-
             } catch (error) {
-                console.error("Failed to load Live2D model:", error);
+                const targetPath = modelPath || LIVE2D_CONFIG.model.path;
+                const publicPath = targetPath.startsWith('/models/')
+                    ? `frontend/public${targetPath}`
+                    : targetPath;
+                console.error("Failed to load Live2D model:", {
+                    error,
+                    requestedUrl: targetPath,
+                    expectedFilePath: publicPath,
+                });
             }
         };
 
@@ -223,12 +280,15 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
     }, [modelPath]);
 
     useEffect(() => {
+        if (modelLoaded) {
+            applyDisplayToModel(modelDisplay);
+        }
+    }, [modelDisplay, modelLoaded]);
+
+    useEffect(() => {
         if (modelLoaded && modelRef.current && currentEmotion) {
-            const model = modelRef.current;
-            if (model.expression) {
-                console.log(`Switching emotion to: ${currentEmotion}`);
-                model.expression(currentEmotion);
-            }
+            console.log(`Switching emotion to: ${currentEmotion}`);
+            applyExpressionIfAvailable(modelRef.current, currentEmotion);
         }
     }, [currentEmotion, modelLoaded]);
 
@@ -287,7 +347,7 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
 
     // 新增：触摸交互（全局事件监听）
     useEffect(() => {
-        if (!modelLoaded || !modelRef.current || !LIVE2D_CONFIG.touchInteraction?.enabled) return;
+        if (!modelLoaded || !modelRef.current || adjustMode || !LIVE2D_CONFIG.touchInteraction?.enabled) return;
 
         const onContextMenu = (e) => {
             const canvas = canvasRef.current;
@@ -322,7 +382,7 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
                 // 计算相对画布的 Y 坐标百分比 (0 ~ 1)
                 const relativeY = (clientY - rect.top) / rect.height;
 
-                const { headRatio, expressions } = LIVE2D_CONFIG.touchInteraction;
+                const { headRatio } = LIVE2D_CONFIG.touchInteraction;
 
                 // 判断点击区域
                 if (relativeY <= headRatio) {
@@ -342,13 +402,56 @@ const Live2DViewer = ({ currentEmotion, audio, modelPath, onTouch }) => {
         return () => {
             window.removeEventListener('contextmenu', onContextMenu);
         };
-    }, [modelLoaded]);
+    }, [modelLoaded, adjustMode]);
+
+    const handlePointerDown = (e) => {
+        if (!adjustMode) return;
+        const display = normalizeModelDisplay(modelDisplay);
+        dragRef.current = {
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+            startOffsetX: display.offset_x,
+            startOffsetY: display.offset_y,
+        };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+    };
+
+    const handlePointerMove = (e) => {
+        if (!adjustMode || !dragRef.current) return;
+        const rect = canvasRef.current?.getBoundingClientRect();
+        const app = appRef.current;
+        if (!rect || !app) return;
+
+        const drag = dragRef.current;
+        const scaleX = app.renderer.width / rect.width;
+        const scaleY = app.renderer.height / rect.height;
+        const display = normalizeModelDisplay(modelDisplay);
+        onDisplayChange?.({
+            ...display,
+            offset_x: Math.round(drag.startOffsetX + ((e.clientX - drag.startX) * scaleX)),
+            offset_y: Math.round(drag.startOffsetY + ((e.clientY - drag.startY) * scaleY)),
+        });
+        e.preventDefault();
+    };
+
+    const handlePointerUp = (e) => {
+        if (!adjustMode || !dragRef.current) return;
+        e.currentTarget.releasePointerCapture?.(dragRef.current.pointerId);
+        dragRef.current = null;
+    };
 
     return (
         <canvas
             id={LIVE2D_CONFIG.canvas.id}
+            className={adjustMode ? 'live2d-adjust-mode' : ''}
             ref={canvasRef}
             style={LIVE2D_CONFIG.canvas.style}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
         />
     );
 };

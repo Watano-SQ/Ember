@@ -1,0 +1,148 @@
+import React, { useEffect, useState } from 'react';
+import './ArchiveModal.css';
+import './ProfileModal.css';
+
+const API_BASE = 'http://localhost:8000/api/profiles';
+
+function ProfileModal({ isOpen, onClose, onProfileSelected, onAdjustDisplay }) {
+    const [profiles, setProfiles] = useState([]);
+    const [currentProfileId, setCurrentProfileId] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [selectingId, setSelectingId] = useState('');
+    const [error, setError] = useState('');
+
+    const loadProfiles = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const res = await fetch(API_BASE);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.detail || `HTTP ${res.status}`);
+            }
+            setCurrentProfileId(data.current_profile_id || '');
+            setProfiles(data.profiles || []);
+        } catch (err) {
+            console.error('加载 profile 列表失败:', err);
+            setError(`加载 profile 列表失败：${err.message || '未知错误'}`);
+            setProfiles([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isOpen) {
+            loadProfiles();
+        }
+    }, [isOpen]);
+
+    const handleSelectProfile = async (profileId) => {
+        if (!profileId || profileId === currentProfileId || selectingId) return;
+
+        setSelectingId(profileId);
+        setError('');
+        try {
+            const res = await fetch(`${API_BASE}/select`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ profile_id: profileId }),
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok || data.success === false) {
+                throw new Error(data.detail || data.error || '切换 profile 失败');
+            }
+
+            setCurrentProfileId(data.current_profile_id || profileId);
+            await onProfileSelected?.();
+        } catch (err) {
+            console.error('切换 profile 失败:', err);
+            setError(err.message || '切换 profile 失败');
+        } finally {
+            setSelectingId('');
+        }
+    };
+
+    if (!isOpen) return null;
+
+    const CloseIcon = () => (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style={{ display: 'block' }}>
+            <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+        </svg>
+    );
+
+    return (
+        <div className="archive-modal-overlay" onClick={onClose}>
+            <div className="archive-modal profile-modal" onClick={e => e.stopPropagation()}>
+                <div className="archive-modal-header">
+                    <h2>人格管理</h2>
+                    <button className="archive-close-btn" onClick={onClose} title="关闭">
+                        <CloseIcon />
+                    </button>
+                </div>
+
+                {error && (
+                    <div className="archive-error">
+                        {error}
+                    </div>
+                )}
+
+                <div className="profile-modal-body">
+                    {loading ? (
+                        <div className="profile-empty">正在加载 profile...</div>
+                    ) : profiles.length === 0 ? (
+                        <div className="profile-empty">暂无本地 profile</div>
+                    ) : (
+                        <div className="profile-list">
+                            {profiles.map(profile => {
+                                const isActive = profile.id === currentProfileId;
+                                const isSelecting = profile.id === selectingId;
+                                return (
+                                    <div
+                                        role="button"
+                                        tabIndex={isActive ? -1 : 0}
+                                        key={profile.id}
+                                        className={`profile-card ${isActive ? 'active' : ''} ${selectingId ? 'busy' : ''}`}
+                                        onClick={() => handleSelectProfile(profile.id)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                handleSelectProfile(profile.id);
+                                            }
+                                        }}
+                                    >
+                                        <span className="profile-avatar">
+                                            {profile.name?.slice(0, 1) || '?'}
+                                        </span>
+                                        <span className="profile-info">
+                                            <span className="profile-name">{profile.name}</span>
+                                            <span className="profile-path">{profile.model_path}</span>
+                                        </span>
+                                        <span className={`profile-status ${isActive ? 'active' : ''}`}>
+                                            {isActive ? '使用中' : isSelecting ? '切换中...' : '切换'}
+                                        </span>
+                                        {isActive && (
+                                            <button
+                                                type="button"
+                                                className="profile-adjust-btn"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onAdjustDisplay?.(profile);
+                                                }}
+                                            >
+                                                调整显示位置
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export default ProfileModal;

@@ -8,6 +8,12 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def _api_key_or_placeholder(api_key: str) -> str:
+    if api_key:
+        return api_key
+    return "missing-api-key"
+
+
 class LLMClient:
     """
     LLM 客户端（单例模式）
@@ -41,15 +47,15 @@ class LLMClient:
 
             logger.info("[LLMClient] 初始化连接池（单例模式）")
             self.large_client = OpenAI(
-                api_key=settings.LARGE_LLM.api_key,
+                api_key=_api_key_or_placeholder(settings.LARGE_LLM.api_key),
                 base_url=settings.LARGE_LLM.base_url,
             )
             self.small_client = OpenAI(
-                api_key=settings.SMALL_LLM.api_key,
+                api_key=_api_key_or_placeholder(settings.SMALL_LLM.api_key),
                 base_url=settings.SMALL_LLM.base_url,
             )
             self.embedding_client = OpenAI(
-                api_key=settings.EMBEDDING_MODEL.api_key,
+                api_key=_api_key_or_placeholder(settings.EMBEDDING_MODEL.api_key),
                 base_url=settings.EMBEDDING_MODEL.base_url,
             )
             self._initialized = True

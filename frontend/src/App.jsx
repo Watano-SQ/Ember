@@ -3,6 +3,24 @@ import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } fro
 import './App.css'
 import Live2DViewer from './Live2DViewer';
 import ArchiveModal from './ArchiveModal';
+import ProfileModal from './ProfileModal';
+
+const DEFAULT_MODEL_DISPLAY = {
+  scale: 1,
+  offset_x: 0,
+  offset_y: 0,
+  anchor: { x: 0.5, y: 0.5 },
+};
+
+const normalizeModelDisplay = (display) => ({
+  scale: Number.isFinite(display?.scale) ? display.scale : DEFAULT_MODEL_DISPLAY.scale,
+  offset_x: Number.isFinite(display?.offset_x) ? display.offset_x : DEFAULT_MODEL_DISPLAY.offset_x,
+  offset_y: Number.isFinite(display?.offset_y) ? display.offset_y : DEFAULT_MODEL_DISPLAY.offset_y,
+  anchor: {
+    x: Number.isFinite(display?.anchor?.x) ? display.anchor.x : DEFAULT_MODEL_DISPLAY.anchor.x,
+    y: Number.isFinite(display?.anchor?.y) ? display.anchor.y : DEFAULT_MODEL_DISPLAY.anchor.y,
+  },
+});
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -16,6 +34,11 @@ function App() {
   const [toastMessage, setToastMessage] = useState("");
   const [showTimeline, setShowTimeline] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [adjustMode, setAdjustMode] = useState(false);
+  const [adjustProfileId, setAdjustProfileId] = useState('');
+  const [adjustDisplay, setAdjustDisplay] = useState(DEFAULT_MODEL_DISPLAY);
+  const [adjustOriginalDisplay, setAdjustOriginalDisplay] = useState(DEFAULT_MODEL_DISPLAY);
   const thoughtTimerRef = useRef(null);
   const thoughtScrollRef = useRef(null);
   const ws = useRef(null);
@@ -139,20 +162,75 @@ function App() {
     };
   }, [messages, hasMore, isLoadingHistory, showLogs]); // 依赖项确保回调能访问最新状态
 
+  const refreshConfig = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/config");
+      const data = await res.json();
+      if (data.error) {
+        console.error("加载配置失败:", data.error);
+      } else {
+        console.log("已加载角色配置:", data);
+        setConfig(data);
+        if (data.state) setCurrentState(data.state);
+      }
+      return data;
+    } catch (err) {
+      console.error("获取后端配置异常:", err);
+      return null;
+    }
+  };
+
+  const startDisplayAdjust = (profile) => {
+    const display = normalizeModelDisplay(profile?.display || config?.live2d?.display);
+    setAdjustProfileId(profile?.id || config?.live2d?.profile_id || '');
+    setAdjustOriginalDisplay(display);
+    setAdjustDisplay(display);
+    setShowProfile(false);
+    setAdjustMode(true);
+  };
+
+  const cancelDisplayAdjust = () => {
+    setAdjustDisplay(adjustOriginalDisplay);
+    setAdjustMode(false);
+    setAdjustProfileId('');
+  };
+
+  const resetDisplayAdjust = () => {
+    setAdjustDisplay(DEFAULT_MODEL_DISPLAY);
+  };
+
+  const saveDisplayAdjust = async () => {
+    if (!adjustProfileId) return;
+
+    try {
+      const display = normalizeModelDisplay(adjustDisplay);
+      const res = await fetch("http://localhost:8000/api/profiles/display", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile_id: adjustProfileId, display }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        if (res.status === 404 && !data.detail && !data.error) {
+          throw new Error("后端缺少 /api/profiles/display 接口，请重启后端后再保存");
+        }
+        throw new Error(data.detail || data.error || `保存显示参数失败：HTTP ${res.status}`);
+      }
+
+      setAdjustMode(false);
+      setAdjustProfileId('');
+      setAdjustDisplay(display);
+      await refreshConfig();
+    } catch (err) {
+      console.error("保存显示参数失败:", err);
+      setToastMessage(err.message || "保存显示参数失败");
+      setTimeout(() => setToastMessage(""), 2000);
+    }
+  };
+
   // 获取后端角色配置
   useEffect(() => {
-    fetch("http://localhost:8000/config")
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          console.error("加载配置失败:", data.error);
-        } else {
-          console.log("已加载角色配置:", data);
-          setConfig(data);
-          if (data.state) setCurrentState(data.state);
-        }
-      })
-      .catch(err => console.error("获取后端配置异常:", err));
+    refreshConfig();
 
     // 初始获取历史记录
     loadHistory();
@@ -646,8 +724,36 @@ function App() {
         currentEmotion={currentEmotion}
         audio={currentAudio}
         modelPath={config?.live2d?.model_path}
+        modelDisplay={adjustMode ? adjustDisplay : config?.live2d?.display}
+        adjustMode={adjustMode}
+        onDisplayChange={(display) => setAdjustDisplay(normalizeModelDisplay(display))}
         onTouch={handleLive2DTouch}
       />
+
+      {adjustMode && (
+        <div className="live2d-adjust-panel">
+          <div className="live2d-adjust-title">调整显示位置</div>
+          <label className="live2d-scale-control">
+            <span>大小 {normalizeModelDisplay(adjustDisplay).scale.toFixed(2)}x</span>
+            <input
+              type="range"
+              min="0.2"
+              max="2"
+              step="0.01"
+              value={normalizeModelDisplay(adjustDisplay).scale}
+              onChange={(e) => {
+                const nextScale = Number(e.target.value);
+                setAdjustDisplay(prev => normalizeModelDisplay({ ...prev, scale: nextScale }));
+              }}
+            />
+          </label>
+          <div className="live2d-adjust-actions">
+            <button type="button" onClick={saveDisplayAdjust}>保存</button>
+            <button type="button" onClick={cancelDisplayAdjust}>取消</button>
+            <button type="button" onClick={resetDisplayAdjust}>重置</button>
+          </div>
+        </div>
+      )}
 
       {/* 存档按钮 - 右下角 */}
       <button
@@ -660,10 +766,27 @@ function App() {
         </svg>
       </button>
 
+      <button
+        className="archive-trigger-btn profile-trigger-btn"
+        onClick={() => setShowProfile(true)}
+        title="人格管理"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-3.31 0-6 1.34-6 3v1.5c0 .83.67 1.5 1.5 1.5h9c.83 0 1.5-.67 1.5-1.5V17c0-1.66-2.69-3-6-3z" />
+        </svg>
+      </button>
+
       {/* 存档弹窗 */}
       <ArchiveModal
         isOpen={showArchive}
         onClose={() => setShowArchive(false)}
+      />
+
+      <ProfileModal
+        isOpen={showProfile}
+        onClose={() => setShowProfile(false)}
+        onProfileSelected={refreshConfig}
+        onAdjustDisplay={startDisplayAdjust}
       />
 
       {/* 状态面板 - 放置在右上方 */}

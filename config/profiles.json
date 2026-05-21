@@ -1,0 +1,33 @@
+{
+  "current_profile_id": "yachiyo",
+  "profiles": [
+    {
+      "id": "yachiyo",
+      "name": "八千代辉夜姬",
+      "model_path": "/models/yachiyo/八千代辉夜姬.model3.json",
+      "display": {
+        "scale": 1,
+        "offset_x": -603,
+        "offset_y": -69,
+        "anchor": {
+          "x": 0.5,
+          "y": 0.5
+        }
+      }
+    },
+    {
+      "id": "lss",
+      "name": "LSS",
+      "model_path": "/models/LSS/LSS.model3.json",
+      "display": {
+        "scale": 0.54,
+        "offset_x": -614,
+        "offset_y": -891,
+        "anchor": {
+          "x": 0.5,
+          "y": 0.5
+        }
+      }
+    }
+  ]
+}
